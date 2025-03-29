@@ -130,7 +130,6 @@ export async function getMenu(handle) {
 
 export async function getProducts({ query, reverse, sortKey }) {
     const res = await shopifyFetch({
-        cache: 'no-cache',
         query: getProductsQuery,
         tags: [TAGS.products],
         variables: {
@@ -198,7 +197,6 @@ export async function getCollections() {
 
 export async function getCollectionProducts({ collection, sortKey, reverse }) {
     const res = await shopifyFetch({
-        cache: 'no-cache',
         query: getCollectionProductsQuery,
         tags: [TAGS.collections, TAGS.products],
         variables: {
@@ -223,7 +221,6 @@ export async function getProduct(handle) {
         variables: {
             handle
         },
-        cache: 'no-cache'
     })
 
     return reshapeProduct(res.body.data.product, false)
