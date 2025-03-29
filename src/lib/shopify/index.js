@@ -8,237 +8,205 @@ import { getCollectionsQuery, getCollectionProductsQuery } from "./queries/colle
 import { getMenuQuery } from "./queries/menu"
 import { getProductQuery, getProductRecommendationsQuery, getProductsQuery } from "./queries/product"
 import { revalidateTag } from "next/cache"
+import { NextResponse } from "next/server"
 
-const domain = process.env.SHOPIFY_STORE_DOMAIN ? ensureStartWith(process.env.SHOPIFY_STORE_DOMAIN, 'https://') : ''
+const domain = process.env.SHOPIFY_STORE_DOMAIN
+    ? ensureStartWith(process.env.SHOPIFY_STORE_DOMAIN, "https://")
+    : "";
+const endpoint = `${domain}${SHOPIFY_GRAPHQL_API_ENDPOINT}`;
+const key = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
 
-const endpoint = `${domain}${SHOPIFY_GRAPHQL_API_ENDPOINT}`
-
-const key = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN
-
-export async function shopifyFetch({
-    cache = 'force-cache',
-    headers,
-    query,
-    tags,
-    variables,
-}) {
+async function shopifyFetch({ cache = "force-cache", headers: customHeaders, query, tags, variables }) {
     try {
         const result = await fetch(endpoint, {
-            method: 'POST',
+            method: "POST",
             headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Storefront-Access-Token': key,
-                ...headers
+                "Content-Type": "application/json",
+                "X-Shopify-Storefront-Access-Token": key,
+                ...customHeaders,
             },
             body: JSON.stringify({
-                ...(query ? { query } : {}),
-                ...(variables ? { variables } : {})
+                ...(query && { query }),
+                ...(variables && { variables }),
             }),
             cache,
-            ...(tags ? { next: { tags } } : {})
-        })
+            ...(tags && { next: { tags } }),
+        });
 
-        const body = await result.json()
+        const body = await result.json();
 
         if (body.errors) {
-            throw body.errors[0]
+            throw body.errors[0];
         }
 
-        return { status: result.status, body }
-
+        return {
+            status: result.status,
+            body,
+        };
     } catch (error) {
         if (isShopifyError(error)) {
             throw {
-                cause: error.cause?.toString() || 'unknown',
+                cause: error.cause?.toString() || "unknown",
                 status: error.status || 500,
                 message: error.message,
-                query
-            }
+                query,
+            };
         }
 
         throw {
             error,
-            query
-        }
+            query,
+        };
     }
 }
 
 function removeEdgesAndNodes(array) {
-    return array.edges.map((edge) => edge?.node)
+    return array.edges.map((edge) => edge?.node);
 }
 
 function reshapeImages(images, productTitle) {
-    const flattend = removeEdgesAndNodes(images)
-
-    return flattend.map((image) => {
-        const fileName = image.url.match(/.*\/(.*)\..*/)?.[1]
-
+    const flattened = removeEdgesAndNodes(images);
+    return flattened.map((image) => {
+        const filename = image.url.match(/.*\/(.*)\..*/)?.[1];
         return {
             ...image,
-            altText: image.altText || `${productTitle} - ${fileName}`
-        }
-    })
+            altText: image.altText || `${productTitle} - ${filename}`,
+        };
+    });
 }
 
 function reshapeProduct(product, filterHiddenProducts = true) {
     if (!product || (filterHiddenProducts && product.tags.includes(HIDDEN_PRODUCT_TAG))) {
-        return undefined
+        return undefined;
     }
-
-    const { images, variants, ...rest } = product
-
+    const { images, variants, ...rest } = product;
     return {
         ...rest,
         images: reshapeImages(images, product.title),
-        variants: removeEdgesAndNodes(variants)
-    }
+        variants: removeEdgesAndNodes(variants),
+    };
 }
 
 function reshapeProducts(products) {
-
-    const reshapedProducts = []
-
+    const reshapedProducts = [];
     for (const product of products) {
         if (product) {
-            const reshapedProduct = reshapeProduct(product)
-
+            const reshapedProduct = reshapeProduct(product);
             if (reshapedProduct) {
-                reshapedProducts.push(reshapedProduct)
+                reshapedProducts.push(reshapedProduct);
             }
         }
     }
-
-    return reshapedProducts
+    return reshapedProducts;
 }
 
 export async function getMenu(handle) {
     const res = await shopifyFetch({
         query: getMenuQuery,
         tags: [TAGS.collections],
-        variables: {
-            handle
-        }
-    })
+        variables: { handle },
+    });
 
     return (
         res.body?.data?.menu?.items.map((item) => ({
             title: item.title,
-            path: item.url.replace(domain, '').replace('/collections', '/search').replace('/pages', '')
+            path: item.url.replace(domain, "").replace("/collections", "/search").replace("/pages", ""),
         })) || []
-
-    )
+    );
 }
-
 
 export async function getProducts({ query, reverse, sortKey }) {
     const res = await shopifyFetch({
         query: getProductsQuery,
         tags: [TAGS.products],
-        variables: {
-            query,
-            reverse,
-            sortKey
-        }
-    })
-
-    return reshapeProducts(removeEdgesAndNodes(res.body.data.products))
+        variables: { query, reverse, sortKey },
+    });
+    return reshapeProducts(removeEdgesAndNodes(res.body.data.products));
 }
 
 function reshapeCollection(collection) {
-    if (!collection) {
-        return undefined
-    }
-
+    if (!collection) return undefined;
     return {
         ...collection,
-        path: `/search/${collection.handle}`
-    }
+        path: `/search/${collection.handle}`,
+    };
 }
 
 function reshapeCollections(collections) {
-    const reshapedCollections = []
-
+    const reshapedCollections = [];
     for (const collection of collections) {
         if (collection) {
-            const reshapedCollection = reshapeCollection(collection)
-
+            const reshapedCollection = reshapeCollection(collection);
             if (reshapedCollection) {
-                reshapedCollections.push(reshapedCollection)
+                reshapedCollections.push(reshapedCollection);
             }
         }
     }
-
-    return reshapedCollections
+    return reshapedCollections;
 }
 
 export async function getCollections() {
     const res = await shopifyFetch({
         query: getCollectionsQuery,
-        tags: [TAGS.collections]
-    })
+        tags: [TAGS.collections],
+    });
 
-    const shopifyCollections = removeEdgesAndNodes(res?.body?.data?.collections)
+    const shopifyCollections = removeEdgesAndNodes(res?.body?.data?.collections);
     const collections = [
         {
-            handle: '',
-            title: 'All',
-            description: 'All products',
+            handle: "",
+            title: "All",
+            description: "All products",
             seo: {
-                title: 'All',
-                description: 'All products'
+                title: "All",
+                description: "All products",
             },
-            path: '/search',
-            updatedAt: new Date().toISOString()
+            path: "/search",
+            updatedAt: new Date().toISOString(),
         },
+        ...reshapeCollections(shopifyCollections).filter(
+            (collection) => !collection.handle.startsWith("hidden")
+        ),
+    ];
 
-        ...reshapeCollections(shopifyCollections).filter((collection) => !collection.handle.startsWith('hidden'))
-    ]
-
-    return collections
+    return collections;
 }
 
-export async function getCollectionProducts({ collection, sortKey, reverse }) {
+export async function getCollectionProducts({ collection, reverse, sortKey }) {
+    const finalSortKey = sortKey === "CREATED_AT" ? "CREATED" : sortKey;
     const res = await shopifyFetch({
         query: getCollectionProductsQuery,
         tags: [TAGS.collections, TAGS.products],
-        variables: {
-            handle: collection,
-            reverse,
-            sortKey: sortKey === 'CREATED_AT' ? 'CREATED' : sortKey
-        }
-    })
+        variables: { handle: collection, reverse, sortKey: finalSortKey },
+    });
 
     if (!res.body.data.collection) {
         console.log(`No collection found for \`${collection}\``);
-        return []
+        return [];
     }
 
-    return reshapeProducts(removeEdgesAndNodes(res.body.data.collection.products))
+    return reshapeProducts(removeEdgesAndNodes(res.body.data.collection.products));
 }
 
 export async function getProduct(handle) {
     const res = await shopifyFetch({
         query: getProductQuery,
         tags: [TAGS.products],
-        variables: {
-            handle
-        },
-    })
-
-    return reshapeProduct(res.body.data.product, false)
+        variables: { handle },
+    });
+    return reshapeProduct(res.body.data.product, false);
 }
 
 export async function getProductRecommendations(productId) {
     const res = await shopifyFetch({
         query: getProductRecommendationsQuery,
         tags: [TAGS.products],
-        variables: {
-            productId
-        }
-    })
+        variables: { productId },
+    });
 
-    return reshapeProducts(res.body.data.productRecommendations)
+    return reshapeProducts(res.body.data.productRecommendations);
 }
+
 function reshapeCart(cart) {
     if (!cart.cost?.totalTaxAmount) {
         cart.cost.totalTaxAmount = {
@@ -254,17 +222,11 @@ function reshapeCart(cart) {
 }
 
 export async function createCart() {
-    const res = await shopifyFetch({
-        query: createCartMutation,
-        cache: "no-store",
-    });
-
+    const res = await shopifyFetch({ query: createCartMutation, cache: "no-store" });
     return reshapeCart(res.body.data.cartCreate.cart);
 }
 
-export async function getCart(
-    cartId
-) {
+export async function getCart(cartId) {
     if (!cartId) return undefined;
 
     const res = await shopifyFetch({
@@ -273,7 +235,6 @@ export async function getCart(
         tags: [TAGS.cart],
     });
 
-    // old carts becomes 'null' when you checkout
     if (!res.body.data.cart) {
         return undefined;
     }
@@ -281,48 +242,30 @@ export async function getCart(
     return reshapeCart(res.body.data.cart);
 }
 
-export async function removeFromCart(
-    cartId,
-    lineIds
-) {
+export async function removeFromCart(cartId, lineIds) {
     const res = await shopifyFetch({
         query: removeFromCartMutation,
-        variables: {
-            cartId,
-            lineIds,
-        },
+        variables: { cartId, lineIds },
         cache: "no-store",
     });
 
     return reshapeCart(res.body.data.cartLinesRemove.cart);
 }
 
-export async function updateCart(
-    cartId,
-    lines
-) {
+export async function updateCart(cartId, lines) {
     const res = await shopifyFetch({
         query: editCartItemsMutation,
-        variables: {
-            cartId,
-            lines,
-        },
+        variables: { cartId, lines },
         cache: "no-store",
     });
 
     return reshapeCart(res.body.data.cartLinesUpdate.cart);
 }
 
-export async function addToCart(
-    cartId,
-    lines
-) {
+export async function addToCart(cartId, lines) {
     const res = await shopifyFetch({
         query: addToCartMutation,
-        variables: {
-            cartId,
-            lines,
-        },
+        variables: { cartId, lines },
         cache: "no-cache",
     });
 
@@ -330,9 +273,6 @@ export async function addToCart(
 }
 
 export async function revalidate(req) {
-    // We always need to respond with a 200 status code to Shopify,
-    // otherwise it will continue to retry the request.
-
     const collectionWebhooks = [
         "collections/create",
         "collections/delete",
@@ -354,14 +294,12 @@ export async function revalidate(req) {
     }
 
     if (!isCollectionUpdate && !isProductUpdate) {
-        // We don't need to revalidate anything for any other topics.
         return NextResponse.json({ status: 200 });
     }
 
     if (isCollectionUpdate) {
         revalidateTag(TAGS.collections);
     }
-
     if (isProductUpdate) {
         revalidateTag(TAGS.products);
     }
@@ -369,21 +307,17 @@ export async function revalidate(req) {
     return NextResponse.json({ status: 200, revalidated: true, now: Date.now() });
 }
 
-// export async function getPage(handle: string): Promise<Page> {
-//     const res = await shopifyFetch < ShopifyPageOperation > ({
-//         query: getPageQuery,
-//         cache: "no-store",
-//         variables: { handle },
-//     });
+export async function getPage(handle) {
+    const res = await shopifyFetch({
+        query: getPageQuery,
+        cache: "no-store",
+        variables: { handle },
+    });
 
-//     return res.body.data.pageByHandle;
-// }
+    return res.body.data.pageByHandle;
+}
 
-// export async function getPages(): Promise<Page[]> {
-//     const res = await shopifyFetch < ShopifyPagesOperation > ({
-//         query: getPagesQuery,
-//         cache: "no-store",
-//     });
-
-//     return removeEdgesAndNodes(res.body.data.pages);
-// }
+export async function getPages() {
+    const res = await shopifyFetch({ query: getPagesQuery, cache: "no-store" });
+    return removeEdgesAndNodes(res.body.data.pages);
+}
